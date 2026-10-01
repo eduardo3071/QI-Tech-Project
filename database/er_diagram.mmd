@@ -1,0 +1,89 @@
+erDiagram
+    CLIENT ||--o{ ACCOUNT : "possui"
+    ACCOUNT_STATUS ||--o{ ACCOUNT : "define estado"
+    ACCOUNT ||--o{ RECEIVABLE : "registra"
+    PAYER ||--o{ RECEIVABLE : "deve"
+    RECEIVABLE_STATUS ||--o{ RECEIVABLE : "define estado"
+    RECEIVABLE ||--o{ RECEIVABLE_STATUS_EVENT : "trilha"
+    RECEIVABLE_STATUS ||--o{ RECEIVABLE_STATUS_EVENT : "from / to"
+    RECEIVABLE ||--o| ADVANCE : "e antecipado por"
+    ACCOUNT ||--o{ TRANSACTION : "movimenta"
+    RECEIVABLE ||--o{ TRANSACTION : "origina"
+
+    CLIENT {
+        int id PK "interno"
+        char_36 client_key UK "externo, sai na URL"
+        text legal_name
+        char_14 document_number UK "CNPJ"
+        text email
+        timestamp created_at
+    }
+
+    ACCOUNT_STATUS {
+        int id PK
+        varchar_20 enumerator UK "ACTIVE | BLOCKED | CLOSED"
+    }
+
+    ACCOUNT {
+        int id PK "interno"
+        char_36 account_key UK "externo, sai na URL"
+        int client_id FK
+        int status_id FK
+        bigint balance "centavos, CHECK >= 0"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PAYER {
+        int id PK
+        char_36 payer_key UK
+        text legal_name "operadora / convenio"
+        char_14 document_number UK
+        timestamp created_at
+    }
+
+    RECEIVABLE_STATUS {
+        int id PK
+        varchar_20 enumerator UK "PENDING | ADVANCED | SETTLED | LATE | DEFAULTED"
+    }
+
+    RECEIVABLE {
+        int id PK "interno"
+        char_36 receivable_key UK "externo, sai na URL"
+        int account_id FK
+        int payer_id FK
+        bigint gross_amount "centavos, CHECK > 0"
+        date due_date
+        int status_id FK
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    RECEIVABLE_STATUS_EVENT {
+        int id PK
+        int receivable_id FK
+        int from_status_id FK "nulo ao nascer"
+        int to_status_id FK
+        varchar_255 reason
+        timestamp created_at
+    }
+
+    ADVANCE {
+        int id PK
+        char_36 advance_key UK
+        int receivable_id FK "UNIQUE: um recebivel, uma antecipacao"
+        numeric_5_4 fee_rate
+        bigint fee_amount "centavos, CHECK >= 0"
+        bigint net_amount "centavos, CHECK > 0"
+        timestamp advanced_at
+    }
+
+    TRANSACTION {
+        int id PK
+        char_36 transaction_key UK
+        int account_id FK
+        int receivable_id FK "nulo quando nao associado"
+        varchar_20 type "ADVANCE_CREDIT | FEE | SETTLEMENT_DEBIT"
+        bigint amount "centavos, negativo em debito"
+        timestamp created_at
+    }
