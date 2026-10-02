@@ -1,7 +1,11 @@
 import os
 
+# Os testes nunca escrevem no banco de demo: usam TEST_DATABASE_URL quando
+# existe (ex.: dentro do docker-compose, apontando para o servico db_test) e
+# so caem para DATABASE_URL se nada mais estiver definido (execucao local solta).
 os.environ["DATABASE_URL"] = os.environ.get(
-    "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/antecipa_saude_test"
+    "TEST_DATABASE_URL",
+    os.environ.get("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/antecipa_saude_test"),
 )
 
 import pytest
