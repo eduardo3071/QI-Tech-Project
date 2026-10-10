@@ -13,9 +13,9 @@
 
 Clínicas, consultórios e laboratórios atendem pelo convênio hoje e recebem da operadora meses depois. Em 2024, hospitais privados associados à Anahp relataram R$ 5,8 bi retidos pelas operadoras (15,9% do faturado) e prazo médio de recebimento subindo de 60–70 para 120 dias; a FenaSaúde contesta e fala em 32,8 dias, com dados da ANS. Se até hospital grande sente o prazo, o prestador pequeno, sem escala para negociar nem caixa para meses de capital de giro, sente mais.
 
-O sistema dá à clínica uma conta e a antecipação dos seus recebíveis de convênio: ela registra a guia que a operadora deve, antecipa e recebe o valor menos a tarifa; quando a operadora paga, o ciclo fecha. Com o dinheiro na conta, transfere para outras contas da plataforma, pagando tarifa. Usam o sistema a clínica e a operadora, que avisa o pagamento.
+O sistema dá à clínica uma conta e a antecipação dos seus recebíveis de convênio: ela registra a guia que a operadora deve, antecipa e recebe na conta o valor menos a tarifa; quando a operadora paga, o ciclo fecha. Com o dinheiro na conta, a clínica transfere para outras contas da plataforma (fornecedor, sócio), pagando tarifa. Os usuários são a clínica e o sistema da operadora, que avisa o pagamento.
 
-A garantia sobre o dinheiro: **cada guia vira crédito uma única vez** (não se registra duas vezes, não se antecipa duas vezes, o aviso de pagamento repetido não credita de novo), **nenhuma conta fica negativa**, nem com pedidos simultâneos, e **o saldo é sempre igual à soma do extrato**.
+A garantia sobre o dinheiro: **cada guia vira crédito uma única vez** (não se registra duas vezes, não se antecipa duas vezes, o aviso de pagamento repetido não credita de novo), **nenhuma conta fica negativa**, nem com pedidos simultâneos, e **o saldo é sempre igual à soma do extrato**. Errar aqui é pagar duas vezes pelo mesmo crédito, deixar a clínica gastar o que não tem ou mostrar um saldo que o extrato não explica.
 
 **Fora do escopo:** autenticação; saque para fora da plataforma; pagamento parcial e glosa (a liquidação assume o valor cheio); marcação automática de atraso e inadimplência; taxa por risco de cada operadora; registro da cessão em registradora.
 
@@ -158,7 +158,7 @@ erDiagram
 **Transferência — caminho feliz** (`POST /account/{account_key}/transaction`)
 
 1. Resolve origem e destino pelas keys; recusa mesma conta (`422`) e destino inexistente (`422`).
-2. Trava as duas contas **em ordem crescente de `id`**, qualquer que seja o sentido: A → B e B → A simultâneas travam na mesma ordem, uma espera a outra e não há impasse.
+2. Trava as duas contas **em ordem crescente de `id`**, qualquer que seja o sentido.
 3. Procura transferência com a mesma `idempotency_key` na origem. Se existir com o mesmo destino e valor, devolve `200` com ela e não move nada.
 4. Confere as duas contas `ACTIVE` e saldo da origem ≥ valor + R$ 2,00.
 5. Grava `transfer`, `TRANSFER_OUT` (−valor) e `FEE` (−tarifa) na origem, `TRANSFER_IN` (+valor) no destino, atualiza os dois saldos. Um commit; `201`.
@@ -167,17 +167,21 @@ erDiagram
 
 1. Oito pedidos de R$ 60,00 saem ao mesmo tempo de uma conta com R$ 100,00.
 2. Todos disputam a trava da origem; o primeiro debita R$ 62,00 e faz commit.
-3. Cada um dos outros, ao pegar a trava, lê o saldo já atualizado (R$ 38,00) e sai com `422` QIT002003 sem escrever nada.
+3. Cada um dos outros, ao pegar a trava, lê o saldo já atualizado (R$ 38,00) e sai com `422` QIT002003 sem escrever nada. A conta nunca fica negativa e, se ficasse, o `CHECK balance >= 0` recusaria o commit.
+
+**Transferência — falha: A → B e B → A ao mesmo tempo**
+
+1. As duas travam primeiro a conta de menor `id` e depois a outra. Uma espera a outra terminar; nenhuma segura uma conta esperando a que a outra segura, então não há impasse.
 
 **Liquidação — caminho feliz e repetição** (`POST /receivable/{receivable_key}/settlement`)
 
 1. Trava o recebível. Se já está em `SETTLED`, devolve `200` sem escrita: o aviso repetido da operadora não credita de novo.
 2. Se está em `PENDING`, trava a conta, grava `SETTLEMENT_CREDIT` com o bruto e soma ao saldo. Conta `BLOCKED` também recebe: o bloqueio impede tirar dinheiro, não entrar.
 3. Se está em `ADVANCED`, não mexe na conta: a clínica já recebeu o líquido e o pagamento remunera a plataforma.
-4. Muda para `SETTLED` com evento; commit; `200`. Mesma ordem de trava da antecipação: se as duas chegam juntas, quem vem depois encontra o estado final da outra.
+4. Muda para `SETTLED` com evento; commit; `200`. Como trava o recebível antes da conta, igual à antecipação, as duas nunca se impedem: quem chega depois encontra o estado final do outro.
 
 > ## Principal desafio
 >
 > - **Qual é:** garantir que cada crédito entre uma única vez e que nenhuma conta gaste o que não tem, com pedidos simultâneos e repetidos, mantendo o saldo igual à soma do extrato.
-> - **Por que é difícil:** a solução óbvia é ler e depois gravar. Dois pedidos leem o mesmo estado (`PENDING`, ou saldo de R$ 100) antes de qualquer um gravar e os dois passam. Cada operação escreve em três a cinco lugares, e travar várias linhas sem ordem cria impasse.
-> - **Como o desenho resolve:** (1) `SELECT … FOR UPDATE` antes de ler estado ou saldo: ler e decidir na mesma transação; (2) ordem fixa de trava: recebível e depois conta; entre contas, menor `id` primeiro; (3) todas as escritas de uma operação num único commit, desfeitas juntas em qualquer erro; (4) repetição tratada como regra: estado final para antecipação e liquidação, `idempotency_key` para transferência, `external_id` para registro de guia; (5) o banco como última barreira: `UNIQUE` em antecipação, guia e chave de idempotência, `CHECK` de saldo não negativo e de sinal por tipo de lançamento. Os testes por HTTP provam com pedidos paralelos: 10 antecipações do mesmo recebível dão um `201`; 8 transferências que o saldo cobre uma vez dão um `201`; 20 cruzadas A ⇄ B terminam sem impasse.
+> - **Por que é difícil:** a solução óbvia é ler e depois gravar. Dois pedidos leem o mesmo estado (`PENDING`, ou saldo de R$ 100) antes de qualquer um gravar e os dois passam. Cada operação ainda escreve em três a cinco lugares; um que fique pela metade faz o saldo divergir do extrato. E travar mais de uma linha sem ordem cria impasse.
+> - **Como o desenho resolve:** (1) `SELECT … FOR UPDATE` antes de ler o estado ou o saldo, para que ler e decidir aconteçam na mesma transação; (2) ordem fixa de trava: recebível e depois conta; entre contas, menor `id` primeiro; (3) todas as escritas de uma operação num único commit, desfeitas juntas em qualquer erro; (4) repetição tratada como regra: estado final para antecipação e liquidação, `idempotency_key` para transferência, `external_id` para registro de guia; (5) o banco como última barreira: `UNIQUE` em antecipação, guia e chave de idempotência, `CHECK` de saldo não negativo e de sinal por tipo de lançamento. A suíte de testes por HTTP prova isso com pedidos paralelos: 10 antecipações do mesmo recebível dão um `201`; 8 transferências que o saldo só cobre uma vez dão um `201`; 20 transferências cruzadas A ⇄ B terminam sem impasse; e o saldo confere com o extrato em todos os casos.
