@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Time** | \<nome 1\> · \<nome 2\> · \<nome 3\> |
+| **Time** | Eduardo Oliveira Rodrigues Cardoso · Ingrid Carvalho Godoy · Natasha Alves |
 | **Data** | 08/10/2026 |
 | **Versão** | 2 |
 | **Repositório** | github.com/eduardo3071/QI-Tech-Project |
