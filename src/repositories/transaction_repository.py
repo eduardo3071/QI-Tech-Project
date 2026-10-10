@@ -7,11 +7,13 @@ class TransactionRepository:
     def __init__(self, session):
         self.session = session
 
-    def create(self, account_id: int, type_: str, amount: int, receivable_id: int | None = None) -> Transaction:
+    def create(self, account_id: int, type_: str, amount: int, receivable_id: int | None = None,
+               transfer_id: int | None = None) -> Transaction:
         transaction = Transaction(
             transaction_key=str(uuid4()),
             account_id=account_id,
             receivable_id=receivable_id,
+            transfer_id=transfer_id,
             type=type_,
             amount=amount,
         )
@@ -20,11 +22,15 @@ class TransactionRepository:
         return transaction
 
     def list_by_account(self, account_id: int, page: int, limit: int) -> list[Transaction]:
+        # id desc desempata: as linhas de uma mesma operacao nascem no mesmo now()
         return (
             self.session.query(Transaction)
             .filter(Transaction.account_id == account_id)
-            .order_by(Transaction.created_at.desc())
+            .order_by(Transaction.created_at.desc(), Transaction.id.desc())
             .offset((page - 1) * limit)
             .limit(limit)
             .all()
         )
+
+    def count_by_account(self, account_id: int) -> int:
+        return self.session.query(Transaction).filter(Transaction.account_id == account_id).count()

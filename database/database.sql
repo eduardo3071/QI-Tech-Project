@@ -1,9 +1,10 @@
 -- QI Tech Bootcamp 2026 · Antecipa Saude
--- Fase 0 - Banco de dados (PostgreSQL)
--- Roda uma vez, quando o banco nasce.
+-- Banco de dados (PostgreSQL). Fonte de verdade do schema.
+-- Roda uma vez, quando o volume do banco nasce: mudou este arquivo,
+-- suba de novo com `docker compose down -v`.
 
 -- =========================================================
--- client: a clinica ou hospital que cadastra recebiveis
+-- client: a clinica, consultorio ou laboratorio
 -- =========================================================
 CREATE TABLE client (
     id              SERIAL PRIMARY KEY,                         -- interno: carrega a relacao
@@ -23,7 +24,9 @@ CREATE TABLE account_status (
 );
 
 -- =========================================================
--- account: a conta da clinica, onde entra o dinheiro antecipado
+-- account: a conta da clinica. O saldo mora numa coluna
+-- (verdade do agora) e o extrato na tabela transaction.
+-- Invariante: balance = soma de transaction.amount da conta.
 -- =========================================================
 CREATE TABLE account (
     id          SERIAL PRIMARY KEY,
@@ -34,6 +37,18 @@ CREATE TABLE account (
     created_at  TIMESTAMP NOT NULL DEFAULT now(),
     updated_at  TIMESTAMP NOT NULL DEFAULT now(),
     CONSTRAINT balance_nao_negativo CHECK (balance >= 0)
+);
+
+-- =========================================================
+-- account_status_event: uma linha por mudanca de estado da conta
+-- =========================================================
+CREATE TABLE account_status_event (
+    id              SERIAL PRIMARY KEY,
+    account_id      INTEGER   NOT NULL REFERENCES account(id),
+    from_status_id  INTEGER   REFERENCES account_status(id),    -- nulo ao nascer
+    to_status_id    INTEGER   NOT NULL REFERENCES account_status(id),
+    reason          VARCHAR(255),
+    created_at      TIMESTAMP NOT NULL DEFAULT now()
 );
 
 -- =========================================================
@@ -56,25 +71,28 @@ CREATE TABLE receivable_status (
 );
 
 -- =========================================================
--- receivable: o valor que a clinica tem a receber da operadora
+-- receivable: o valor que a clinica tem a receber da operadora.
+-- external_id e o numero da guia/fatura no sistema da operadora:
+-- o mesmo credito nao entra duas vezes (nem em contas diferentes),
+-- senao seria antecipado duas vezes.
 -- =========================================================
 CREATE TABLE receivable (
-    id           SERIAL PRIMARY KEY,
-    receivable_key CHAR(36)  NOT NULL UNIQUE,
-    account_id   INTEGER    NOT NULL REFERENCES account(id),
-    payer_id     INTEGER    NOT NULL REFERENCES payer(id),
-    gross_amount BIGINT     NOT NULL,                           -- centavos, o valor cheio do convenio
-    due_date     DATE       NOT NULL,
-    status_id    INTEGER    NOT NULL REFERENCES receivable_status(id),
-    created_at   TIMESTAMP  NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMP  NOT NULL DEFAULT now(),
-    CONSTRAINT gross_amount_positivo CHECK (gross_amount > 0)
+    id             SERIAL PRIMARY KEY,
+    receivable_key CHAR(36)    NOT NULL UNIQUE,
+    account_id     INTEGER     NOT NULL REFERENCES account(id),
+    payer_id       INTEGER     NOT NULL REFERENCES payer(id),
+    external_id    VARCHAR(64) NOT NULL,
+    gross_amount   BIGINT      NOT NULL,                        -- centavos, o valor cheio do convenio
+    due_date       DATE        NOT NULL,
+    status_id      INTEGER     NOT NULL REFERENCES receivable_status(id),
+    created_at     TIMESTAMP   NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMP   NOT NULL DEFAULT now(),
+    CONSTRAINT gross_amount_positivo CHECK (gross_amount > 0),
+    CONSTRAINT receivable_unico_por_operadora UNIQUE (payer_id, external_id)
 );
 
 -- =========================================================
 -- receivable_status_event: uma linha por mudanca de estado
--- exigencia regulatoria em sistema financeiro: guarda o caminho,
--- nao so o estado atual.
 -- =========================================================
 CREATE TABLE receivable_status_event (
     id              SERIAL PRIMARY KEY,
@@ -86,36 +104,68 @@ CREATE TABLE receivable_status_event (
 );
 
 -- =========================================================
--- advance: a operacao de antecipacao em si - um recebivel so
--- pode ser antecipado uma vez (UNIQUE em receivable_id)
+-- advance: a antecipacao - um recebivel so pode ser antecipado
+-- uma vez (UNIQUE em receivable_id)
 -- =========================================================
 CREATE TABLE advance (
-    id           SERIAL PRIMARY KEY,
-    advance_key  CHAR(36)  NOT NULL UNIQUE,
-    receivable_id INTEGER  NOT NULL REFERENCES receivable(id),
-    fee_rate     NUMERIC(5,4) NOT NULL,                         -- ex.: 0.0350 = 3,5%
-    fee_amount   BIGINT    NOT NULL,                             -- centavos
-    net_amount   BIGINT    NOT NULL,                             -- centavos, o que cai na conta
-    advanced_at  TIMESTAMP NOT NULL DEFAULT now(),
+    id            SERIAL PRIMARY KEY,
+    advance_key   CHAR(36)  NOT NULL UNIQUE,
+    receivable_id INTEGER   NOT NULL REFERENCES receivable(id),
+    fee_rate      NUMERIC(5,4) NOT NULL,                        -- ex.: 0.0350 = 3,5%
+    fee_amount    BIGINT    NOT NULL,                           -- centavos
+    net_amount    BIGINT    NOT NULL,                           -- centavos, o que cai na conta
+    advanced_at   TIMESTAMP NOT NULL DEFAULT now(),
     CONSTRAINT advance_unico_por_recebivel UNIQUE (receivable_id),
     CONSTRAINT fee_amount_nao_negativo CHECK (fee_amount >= 0),
     CONSTRAINT net_amount_positivo CHECK (net_amount > 0)
 );
 
 -- =========================================================
--- transaction: toda movimentacao de conta - credito da
--- antecipacao, debito da tarifa, debito no settlement
+-- transfer: transferencia entre contas da plataforma, com tarifa.
+-- idempotency_key vem do cliente: repetir o mesmo pedido nao
+-- movimenta dinheiro de novo.
+-- =========================================================
+CREATE TABLE transfer (
+    id                     SERIAL PRIMARY KEY,
+    transfer_key           CHAR(36)  NOT NULL UNIQUE,
+    origin_account_id      INTEGER   NOT NULL REFERENCES account(id),
+    destination_account_id INTEGER   NOT NULL REFERENCES account(id),
+    amount                 BIGINT    NOT NULL,                  -- centavos, o que chega no destino
+    fee_amount             BIGINT    NOT NULL,                  -- centavos, cobrado da origem
+    idempotency_key        CHAR(36)  NOT NULL,
+    created_at             TIMESTAMP NOT NULL DEFAULT now(),
+    CONSTRAINT transfer_idempotente UNIQUE (origin_account_id, idempotency_key),
+    CONSTRAINT transfer_contas_distintas CHECK (origin_account_id <> destination_account_id),
+    CONSTRAINT transfer_amount_positivo CHECK (amount > 0),
+    CONSTRAINT transfer_fee_nao_negativa CHECK (fee_amount >= 0)
+);
+
+-- =========================================================
+-- transaction: o extrato. Toda movimentacao de conta, com sinal:
+-- credito positivo, debito negativo. O banco recusa sinal trocado.
 -- =========================================================
 CREATE TABLE transaction (
-    id             SERIAL PRIMARY KEY,
-    transaction_key CHAR(36) NOT NULL UNIQUE,
-    account_id     INTEGER  NOT NULL REFERENCES account(id),
-    receivable_id  INTEGER  REFERENCES receivable(id),          -- nulo em movimentacoes sem recebivel associado
-    type           VARCHAR(20) NOT NULL,                        -- ADVANCE_CREDIT | FEE | SETTLEMENT_CREDIT
-    amount         BIGINT   NOT NULL,                            -- centavos; negativo em debito, positivo em credito
-    created_at     TIMESTAMP NOT NULL DEFAULT now(),
-    CONSTRAINT transaction_type_valido CHECK (type IN ('ADVANCE_CREDIT', 'FEE', 'SETTLEMENT_CREDIT'))
+    id              SERIAL PRIMARY KEY,
+    transaction_key CHAR(36)    NOT NULL UNIQUE,
+    account_id      INTEGER     NOT NULL REFERENCES account(id),
+    receivable_id   INTEGER     REFERENCES receivable(id),      -- preenchido em antecipacao e liquidacao
+    transfer_id     INTEGER     REFERENCES transfer(id),        -- preenchido em transferencia
+    type            VARCHAR(20) NOT NULL,
+    amount          BIGINT      NOT NULL,                       -- centavos; negativo em debito
+    created_at      TIMESTAMP   NOT NULL DEFAULT now(),
+    CONSTRAINT transaction_type_valido CHECK (
+        type IN ('ADVANCE_CREDIT', 'SETTLEMENT_CREDIT', 'TRANSFER_IN', 'TRANSFER_OUT', 'FEE')
+    ),
+    CONSTRAINT transaction_sinal_coerente CHECK (
+        (type IN ('ADVANCE_CREDIT', 'SETTLEMENT_CREDIT', 'TRANSFER_IN') AND amount > 0)
+        OR (type IN ('TRANSFER_OUT', 'FEE') AND amount < 0)
+    ),
+    CONSTRAINT transaction_origem_unica CHECK (
+        NOT (receivable_id IS NOT NULL AND transfer_id IS NOT NULL)
+    )
 );
+
+CREATE INDEX transaction_extrato_idx ON transaction (account_id, created_at DESC, id DESC);
 
 -- =========================================================
 -- dados iniciais dos enumeradores

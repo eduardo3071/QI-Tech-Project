@@ -1,40 +1,33 @@
+"""Testes de caixa-preta: falam com a API so por HTTP, como qualquer cliente.
+
+Nenhum arquivo daqui importa codigo de src/. A API alvo vem de API_URL
+(padrao http://localhost:8000). Cada teste cria os proprios dados com
+CNPJ e chaves aleatorios, entao a suite roda contra um banco limpo ou ja usado.
+"""
 import os
+import time
 
-# Os testes nunca escrevem no banco de demo: usam TEST_DATABASE_URL quando
-# existe (ex.: dentro do docker-compose, apontando para o servico db_test) e
-# so caem para DATABASE_URL se nada mais estiver definido (execucao local solta).
-os.environ["DATABASE_URL"] = os.environ.get(
-    "TEST_DATABASE_URL",
-    os.environ.get("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/antecipa_saude_test"),
-)
-
+import httpx
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import text
 
-from src.app import application
-from src.database import SessionLocal, engine
-from src.models import Base
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 
-@pytest.fixture(autouse=True)
-def reset_database():
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
-
-    session = SessionLocal()
-    session.execute(text("INSERT INTO account_status (enumerator) VALUES ('ACTIVE'), ('BLOCKED'), ('CLOSED')"))
-    session.execute(
-        text(
-            "INSERT INTO receivable_status (enumerator) "
-            "VALUES ('PENDING'), ('ADVANCED'), ('SETTLED'), ('LATE'), ('DEFAULTED')"
-        )
-    )
-    session.commit()
-    session.close()
-    yield
+@pytest.fixture(scope="session", autouse=True)
+def wait_for_api():
+    deadline = time.time() + 60
+    last_error = None
+    while time.time() < deadline:
+        try:
+            if httpx.get(f"{API_URL}/health", timeout=2).status_code == 200:
+                return
+        except httpx.HTTPError as error:
+            last_error = error
+        time.sleep(1)
+    pytest.exit(f"API nao respondeu em {API_URL}/health: {last_error}", returncode=1)
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(application)
+def api():
+    with httpx.Client(base_url=API_URL, timeout=30) as client:
+        yield client

@@ -1,3 +1,5 @@
+# Sobe a API com o banco:            docker compose up --build
+# Roda os testes num banco descartavel: docker compose --profile test run --rm tests
 services:
   db:
     image: postgres:16-alpine
@@ -11,39 +13,68 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d antecipa_saude"]
       interval: 5s
       timeout: 5s
       retries: 10
-
-  db_test:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: antecipa_saude_test
-    ports:
-      - "55432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    tmpfs:
-      - /var/lib/postgresql/data   # descartavel: o pytest recria o schema a cada rodada
 
   api:
     build: .
     depends_on:
       db:
         condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/antecipa_saude
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # ---------- perfil de teste: banco descartavel, criado pelo mesmo database.sql ----------
+  db_test:
+    profiles: ["test"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: antecipa_saude_test
+    volumes:
+      - ./database/database.sql:/docker-entrypoint-initdb.d/database.sql:ro
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d antecipa_saude_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api_test:
+    profiles: ["test"]
+    build: .
+    depends_on:
       db_test:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/antecipa_saude
-      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@db_test:5432/antecipa_saude_test
-    ports:
-      - "8000:8000"
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db_test:5432/antecipa_saude_test
+    command: ["uvicorn", "src.app:application", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  tests:
+    profiles: ["test"]
+    build: .
+    depends_on:
+      api_test:
+        condition: service_healthy
+    environment:
+      API_URL: http://api_test:8000
+    command: ["pytest", "-q"]
 
 volumes:
   antecipa_saude_data:

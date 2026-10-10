@@ -4,7 +4,7 @@ from src.repositories.receivable_repository import ReceivableRepository
 from src.repositories.transaction_repository import TransactionRepository
 
 
-class SettleController:
+class SettlementController:
     def __init__(self, session):
         self.session = session
         self.account_repository = AccountRepository(session)
@@ -16,12 +16,15 @@ class SettleController:
         if receivable is None:
             raise ReceivableNotFound(receivable_key)
 
-        # idempotente: reenviar o settle da operadora nao pode duplicar credito
-        if receivable.status.enumerator == "SETTLED":
+        current = receivable.status.enumerator
+
+        # idempotente: reenviar o aviso de pagamento da operadora nao duplica credito
+        if current == "SETTLED":
             return receivable
 
-        if receivable.status.enumerator in ("PENDING", "LATE"):
-            # nunca foi antecipado: o valor cheio chega agora na conta da clinica
+        if current in ("PENDING", "LATE"):
+            # nunca foi antecipado: o valor cheio chega agora na conta da clinica.
+            # Conta BLOCKED tambem recebe: o bloqueio impede tirar dinheiro, nao entrar.
             account = self.account_repository.get_by_key_for_update(receivable.account.account_key)
             self.transaction_repository.create(
                 account.id, "SETTLEMENT_CREDIT", receivable.gross_amount, receivable.id
@@ -29,8 +32,9 @@ class SettleController:
             self.account_repository.credit(account, receivable.gross_amount)
             reason = "operadora pagou - sem antecipacao previa"
         else:
-            # ja foi antecipado: a clinica ja recebeu o net_amount, aqui so fecha o ciclo
-            reason = "operadora pagou apos antecipacao"
+            # ADVANCED (ou DEFAULTED recuperado): a clinica ja recebeu o liquido na antecipacao;
+            # o pagamento da operadora remunera a plataforma e so fecha o ciclo
+            reason = f"operadora pagou - recebivel estava em {current}"
 
         self.receivable_repository.change_status(receivable, "SETTLED", reason=reason)
         self.session.commit()
