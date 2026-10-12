@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from tests.conftest import API_URL
+from tests.conftest import API_URL, INTERNAL_HEADERS
 from tests.helpers import assert_balance_matches_statement, create_account, create_receivable, statement
 
 
@@ -39,7 +39,8 @@ def test_concurrent_advances_credit_only_once(api):
     receivable_key = create_receivable(api, account_key, gross_amount=100_000)
 
     def advance(_):
-        return httpx.post(f"{API_URL}/receivable/{receivable_key}/advance", timeout=30).status_code
+        url = f"{API_URL}/receivable/{receivable_key}/advance"
+        return httpx.post(url, timeout=30, headers=INTERNAL_HEADERS).status_code
 
     with ThreadPoolExecutor(max_workers=10) as pool:
         codes = list(pool.map(advance, range(10)))

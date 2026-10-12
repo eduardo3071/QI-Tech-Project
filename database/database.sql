@@ -52,13 +52,15 @@ CREATE TABLE account_status_event (
 );
 
 -- =========================================================
--- payer: a operadora/convenio devedora do recebivel
+-- payer: a operadora/convenio devedora do recebivel. Cadastrada pelo
+-- back-office; usa a propria credencial para avisar pagamentos.
 -- =========================================================
 CREATE TABLE payer (
     id              SERIAL PRIMARY KEY,
     payer_key       CHAR(36) NOT NULL UNIQUE,
     legal_name      TEXT     NOT NULL,
     document_number CHAR(14) NOT NULL UNIQUE,
+    token_hash      CHAR(64) NOT NULL UNIQUE,                   -- SHA-256 da credencial; o token so aparece uma vez, no cadastro
     created_at      TIMESTAMP NOT NULL DEFAULT now()
 );
 

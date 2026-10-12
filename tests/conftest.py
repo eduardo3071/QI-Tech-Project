@@ -11,6 +11,9 @@ import httpx
 import pytest
 
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
+INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "dev-internal-token")
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "dev-admin-token")
+INTERNAL_HEADERS = {"INTERNAL-TOKEN": INTERNAL_TOKEN}
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -28,6 +31,13 @@ def wait_for_api():
 
 
 @pytest.fixture
-def api():
+def anonymous():
+    """Cliente sem INTERNAL-TOKEN, para provar que a API recusa quem vem de fora."""
     with httpx.Client(base_url=API_URL, timeout=30) as client:
+        yield client
+
+
+@pytest.fixture
+def api():
+    with httpx.Client(base_url=API_URL, timeout=30, headers=INTERNAL_HEADERS) as client:
         yield client

@@ -1,5 +1,12 @@
 # Sobe a API com o banco:            docker compose up --build
 # Roda os testes num banco descartavel: docker compose --profile test run --rm tests
+#
+# Segredos: os valores abaixo sao de desenvolvimento. Fora da maquina local,
+# defina INTERNAL_TOKEN e ADMIN_TOKEN num arquivo .env (ele fica fora do git).
+x-secrets: &secrets
+  INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+  ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-token}
+
 services:
   db:
     image: postgres:16-alpine
@@ -24,7 +31,9 @@ services:
       db:
         condition: service_healthy
     environment:
+      <<: *secrets
       DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/antecipa_saude
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-*}
     ports:
       - "8000:8000"
     healthcheck:
@@ -58,6 +67,7 @@ services:
       db_test:
         condition: service_healthy
     environment:
+      <<: *secrets
       DATABASE_URL: postgresql+psycopg://postgres:postgres@db_test:5432/antecipa_saude_test
     command: ["uvicorn", "src.app:application", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
     healthcheck:
@@ -73,6 +83,7 @@ services:
       api_test:
         condition: service_healthy
     environment:
+      <<: *secrets
       API_URL: http://api_test:8000
     command: ["pytest", "-q"]
 

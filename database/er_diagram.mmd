@@ -40,6 +40,7 @@ erDiagram
         int id PK
         char36 payer_key UK
         char14 document_number UK "CNPJ da operadora"
+        char64 token_hash UK "SHA-256 da credencial da operadora"
     }
     RECEIVABLE {
         int id PK

@@ -1,3 +1,4 @@
+from tests.conftest import ADMIN_TOKEN
 from tests.helpers import random_document_number
 
 
@@ -34,8 +35,26 @@ def test_create_client_invalid_payload_is_400(api):
 def test_create_payer_duplicate_is_409(api):
     payload = {"legal_name": "Operadora", "document_number": random_document_number()}
 
-    assert api.post("/payer", json=payload).status_code == 201
-    second = api.post("/payer", json=payload)
+    admin = {"ADMIN-TOKEN": ADMIN_TOKEN}
+    assert api.post("/payer", json=payload, headers=admin).status_code == 201
+    second = api.post("/payer", json=payload, headers=admin)
 
     assert second.status_code == 409
     assert second.json()["code"] == "QIT004002"
+
+
+def test_create_payer_returns_credential_once(api):
+    payload = {"legal_name": "Operadora", "document_number": random_document_number()}
+
+    body = api.post("/payer", json=payload, headers={"ADMIN-TOKEN": ADMIN_TOKEN}).json()
+
+    assert len(body["payer_token"]) >= 32
+
+
+def test_create_payer_without_admin_token_is_403(api):
+    payload = {"legal_name": "Operadora Falsa", "document_number": random_document_number()}
+
+    response = api.post("/payer", json=payload)
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "QIT004005"

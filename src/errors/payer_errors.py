@@ -20,3 +20,14 @@ class ReferencedPayerNotFound(ApplicationError):
 
     def __init__(self, payer_key: str):
         super().__init__(f"payer_key={payer_key} nao existe")
+
+
+class PayerNotAuthorized(ApplicationError):
+    # so a operadora que deve o recebivel pode avisar que ele foi pago
+    status_code = 403
+    code = "QIT004004"
+    title = "Payer Not Authorized"
+    translation = "Credencial da operadora ausente ou de outra operadora"
+
+    def __init__(self, receivable_key: str):
+        super().__init__(f"PAYER-TOKEN ausente ou nao pertence a operadora do receivable_key={receivable_key}")

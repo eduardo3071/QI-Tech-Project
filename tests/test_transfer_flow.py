@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from tests.conftest import API_URL
+from tests.conftest import API_URL, INTERNAL_HEADERS
 from tests.helpers import assert_balance_matches_statement, create_account, fund_account, random_key, statement
 
 FEE = 200
@@ -80,7 +80,7 @@ def test_concurrent_transfers_never_overdraw(api):
     # cada transferencia custa 6.000 + 200: o saldo cobre so uma
     def transfer(destination):
         return httpx.post(f"{API_URL}/account/{origin}/transaction",
-                          json=transfer_payload(destination, 6_000), timeout=30).status_code
+                          json=transfer_payload(destination, 6_000), timeout=30, headers=INTERNAL_HEADERS).status_code
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         codes = list(pool.map(transfer, destinations))
@@ -98,7 +98,7 @@ def test_crossed_transfers_do_not_deadlock(api):
     def transfer(pair):
         origin, destination = pair
         return httpx.post(f"{API_URL}/account/{origin}/transaction",
-                          json=transfer_payload(destination, 1_000), timeout=30).status_code
+                          json=transfer_payload(destination, 1_000), timeout=30, headers=INTERNAL_HEADERS).status_code
 
     pairs = [(first, second), (second, first)] * 10
     with ThreadPoolExecutor(max_workers=10) as pool:

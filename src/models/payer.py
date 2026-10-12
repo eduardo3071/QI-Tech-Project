@@ -10,4 +10,5 @@ class Payer(Base):
     payer_key = Column(CHAR(36), nullable=False, unique=True)
     legal_name = Column(Text, nullable=False)
     document_number = Column(CHAR(14), nullable=False, unique=True)
+    token_hash = Column(CHAR(64), nullable=False, unique=True)   # SHA-256 da credencial, nunca o token
     created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())

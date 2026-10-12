@@ -3,7 +3,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
+from fastapi.middleware.cors import CORSMiddleware
+
+from src.constants import (
+    ADMIN_TOKEN_HEADER,
+    ALLOWED_ORIGINS,
+    INTERNAL_TOKEN_HEADER,
+    PAYER_TOKEN_HEADER,
+    REQUEST_ID_HEADER,
+)
 from src.errors.base_error import ApplicationError
+from src.middlewares.internal_token import register_internal_token_middleware
+from src.middlewares.request_context import register_request_context_middleware
+from src.middlewares.request_logger import register_request_logger_middleware
+from src.middlewares.session_manager import register_session_manager_middleware
 from src.resources import (
     account_resource,
     client_resource,
@@ -15,6 +28,22 @@ from src.resources import (
 # Convencao: recurso no singular, em ingles, identificado pela _key (UUID).
 # Esta e a lista completa do que a API atende: rota que nao esta aqui nao existe.
 application = FastAPI(title="Antecipa Saude")
+
+# Middlewares: o ultimo registrado e o mais de fora. Ordem de quem a requisicao
+# atravessa, de fora para dentro: CORS -> identificador -> log -> token -> sessao.
+# Log antes do token, para registrar tentativas recusadas; sessao por dentro de
+# tudo, porque e o recurso mais caro.
+register_session_manager_middleware(application)
+register_internal_token_middleware(application)
+register_request_logger_middleware(application)
+register_request_context_middleware(application)
+application.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=[INTERNAL_TOKEN_HEADER, PAYER_TOKEN_HEADER, ADMIN_TOKEN_HEADER, REQUEST_ID_HEADER, "Content-Type"],
+    expose_headers=[REQUEST_ID_HEADER],
+)
 
 application.add_api_route("/health", health_resource.on_get, methods=["GET"])
 

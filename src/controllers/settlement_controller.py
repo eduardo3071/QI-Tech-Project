@@ -1,7 +1,9 @@
+from src.errors.payer_errors import PayerNotAuthorized
 from src.errors.receivable_errors import ReceivableNotFound
 from src.repositories.account_repository import AccountRepository
 from src.repositories.receivable_repository import ReceivableRepository
 from src.repositories.transaction_repository import TransactionRepository
+from src.utils.credentials import token_matches
 
 
 class SettlementController:
@@ -11,10 +13,15 @@ class SettlementController:
         self.receivable_repository = ReceivableRepository(session)
         self.transaction_repository = TransactionRepository(session)
 
-    def create(self, receivable_key: str):
+    def create(self, receivable_key: str, payer_token: str | None):
         receivable = self.receivable_repository.get_by_key_for_update(receivable_key)
         if receivable is None:
             raise ReceivableNotFound(receivable_key)
+
+        # so a operadora que deve este recebivel avisa que pagou; sem isso, qualquer um
+        # marcaria uma guia como paga e a conta receberia o valor cheio sem dinheiro entrar
+        if not token_matches(payer_token, receivable.payer.token_hash):
+            raise PayerNotAuthorized(receivable_key)
 
         current = receivable.status.enumerator
 
